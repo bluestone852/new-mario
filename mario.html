@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Classic Mario</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #6B8CFF;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        #game-container {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            margin: 0 auto;
+            border: 4px solid #333;
+            overflow: hidden;
+        }
+        #game-canvas {
+            background-color: #6B8CFF;
+        }
+        #score-display {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 2px 2px 0px #000;
+            z-index: 10;
+        }
+        #controls {
+            text-align: center;
+            margin-top: 10px;
+            color: white;
+            font-weight: bold;
+            text-shadow: 1px 1px 0px #000;
+        }
+        #start-screen {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 20;
+        }
+        #start-button {
+            padding: 10px 20px;
+            background-color: #E52521;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 20px;
+            cursor: pointer;
+            margin-top: 20px;
+            font-weight: bold;
+        }
+        #start-button:hover {
+            background-color: #FF4500;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas" width="800" height="600"></canvas>
+        <div id="score-display">SCORE: 0</div>
+        <div id="start-screen">
+            <h1>SUPER MARIO BROS.</h1>
+            <p>Classic 1985 Style</p>
+            <button id="start-button">START GAME</button>
+        </div>
+    </div>
+    <div id="controls">
+        CONTROLS: Arrow Keys to Move, Space to Jump
+    </div>
+
+    <script>
+        // Game constants
+        const GRAVITY = 0.5;
+        const JUMP_FORCE = -12;
+        const SPEED = 5;
+        const GROUND_FRICTION = 0.8;
+        const AIR_RESISTANCE = 0.95;
+
+        // Game state
+        let score = 0;
+        let gameStarted = false;
+        let gamePaused = false;
+
+        // Canvas setup
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score-display');
+        const startScreen = document.getElementById('start-screen');
+        const startButton = document.getElementById('start-button');
+
+        // Game dimensions
+        const gameWidth = canvas.width;
+        const gameHeight = canvas.height;
+
+        // Create sprite loader
+        class SpriteLoader {
+            constructor() {
+                this.sprites = {};
+            }
+
+            loadSprite(name, src) {
+                const sprite = new Image();
+                sprite.src = src;
+                this.sprites[name] = sprite;
+                return new Promise((resolve, reject) => {
+                    sprite.onload = () => resolve(sprite);
+                    sprite.onerror = reject;
+                });
+            }
+
+            getSprite(name) {
+                return this.sprites[name];
+            }
+        }
+
+        // Create color-based sprites for the retro look
+        const spriteLoader = new SpriteLoader();
+
+        // Player class
+        class Player {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.width = 32;
+                this.height = 48;
+                this.vx = 0;
+                this.vy = 0;
+                this.jumping = false;
+                this.facingRight = true;
+                this.frameCount = 0;
+                this.currentFrame = 0;
+                this.frameDelay = 5;
+                this.numFrames = 4;
+                this.isInvincible = false;
+                this.invincibleTimer = 0;
+            }
+
+            update(platforms, coins, enemies) {
+                // Apply gravity
+                this.vy += GRAVITY;
+
+                // Apply friction when on ground
+                if (!this.jumping) {
+                    this.vx *= GROUND_FRICTION;
+                } else {
+                    this.vx *= AIR_RESISTANCE;
+                }
+
+                // Update position
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Check boundaries
+                if (this.x < 0) this.x = 0;
+                if (this.x + this.width > gameWidth) this.x = gameWidth - this.width;
+
+                // Check if player falls out of the game
+                if (this.y > gameHeight) {
+                    this.reset();
+                }
+
+                // Animation frames
+                if (Math.abs(this.vx) > 0.5) {
+                    this.frameCount++;
+                    if (this.frameCount >= this.frameDelay) {
+                        this.frameCount = 0;
+                        this.currentFrame = (this.currentFrame + 1) % this.numFrames;
+                    }
+                } else {
+                    this.currentFrame = 0;
+                }
+
+                // Platform collision
+                let onGround = false;
+                for (const platform of platforms) {
+                    if (this.collidesWith(platform)) {
+                        // Collision from top
+                        if (this.vy > 0 && this.y + this.height - this.vy <= platform.y) {
+                            this.y = platform.y - this.height;
+                            this.vy = 0;
+                            this.jumping = false;
+                            onGround = true;
+                        }
+                        // Collision from bottom
+                        else if (this.vy < 0 && this.y - this.vy >= platform.y + platform.height) {
+                            this.y = platform.y + platform.height;
+                            this.vy = 0;
+                            
+                            // Break brick platforms if hitting from below
+                            if (platform.type === 'brick') {
+                                const index = platforms.indexOf(platform);
+                                if (index !== -1) {
+                                    platforms.splice(index, 1);
+                                    score += 10;
+                                    updateScore();
+                                }
+                            }
+                        }
+                        // Collision from left
+                        else if (this.vx > 0 && this.x + this.width - this.vx <= platform.x) {
+                            this.x = platform.x - this.width;
+                            this.vx = 0;
+                        }
+                        // Collision from right
+                        else if (this.vx < 0 && this.x - this.vx >= platform.x + platform.width) {
+                            this.x = platform.x + platform.width;
+                            this.vx = 0;
+                        }
+                    }
+                }
+
+                if (!onGround) {
+                    this.jumping = true;
+                }
+
+                // Coin collection
+                for (let i = coins.length - 1; i >= 0; i--) {
+                    const coin = coins[i];
+                    if (this.collidesWith(coin)) {
+                        coins.splice(i, 1);
+                        score += 100;
+                        updateScore();
+                    }
+                }
+
+                // Enemy collision
+                if (!this.isInvincible) {
+                    for (let i = enemies.length - 1; i >= 0; i--) {
+                        const enemy = enemies[i];
+                        if (this.collidesWith(enemy)) {
+                            // Jump on top of enemy to defeat it
+                            if (this.vy > 0 && this.y + this.height - this.vy <= enemy.y) {
+                                enemies.splice(i, 1);
+                                this.vy = JUMP_FORCE / 1.5; // Bounce up a bit
+                                score += 200;
+                                updateScore();
+                            } else {
+                                // Hit by enemy
+                                this.getHit();
+                            }
+                        }
+                    }
+                } else {
+                    // Update invincibility timer
+                    this.invincibleTimer--;
+                    if (this.invincibleTimer <= 0) {
+                        this.isInvincible = false;
+                    }
+                }
+            }
+
+            getHit() {
+                this.isInvincible = true;
+                this.invincibleTimer = 60; // 60 frames of invincibility
+                score = Math.max(0, score - 50); // Lose points
+                updateScore();
+            }
+
+            reset() {
+                this.x = 100;
+                this.y = 300;
+                this.vx = 0;
+                this.vy = 0;
+                this.jumping = false;
+                score = Math.max(0, score - 100); // Lose points
+                updateScore();
+            }
+
+            jump() {
+                if (!this.jumping) {
+                    this.vy = JUMP_FORCE;
+                    this.jumping = true;
+                }
+            }
+
+            draw() {
+                ctx.save();
+                
+                // Flash effect when invincible
+                if (this.isInvincible && Math.floor(Date.now() / 100) % 2 === 0) {
+                    ctx.globalAlpha = 0.5;
+                }
+
+                // Draw player as a colored rectangle (simplified sprite)
+                if (this.facingRight) {
+                    // Red overalls
+                    ctx.fillStyle = '#E52521';
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                    
+                    // Blue shirt
+                    ctx.fillStyle = '#4040E0';
+                    ctx.fillRect(this.x, this.y, this.width, this.height / 2);
+                    
+                    // Cap
+                    ctx.fillStyle = '#E52521';
+                    ctx.fillRect(this.x - 2, this.y, this.width + 4, 10);
+                    
+                    // Face
+                    ctx.fillStyle = '#FFCCAA';
+                    ctx.fillRect(this.x + 4, this.y + 10, this.width - 8, 14);
+                    
+                    // Eyes
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(this.x + 20, this.y + 16, 4, 4);
+                    
+                    // Mustache
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(this.x + 10, this.y + 24, 15, 3);
+
+                    // Animate walking
+                    if (this.vx !== 0 && !this.jumping) {
+                        const legOffset = [0, 5, 0, -5][this.currentFrame];
+                        ctx.fillStyle = '#4040E0';
+                        ctx.fillRect(this.x + 6, this.y + this.height - 15 + legOffset, 8, 15);
+                        ctx.fillRect(this.x + 18, this.y + this.height - 15 - legOffset, 8, 15);
+                    }
+                } else {
+                    // Mirrored version when facing left
+                    // Red overalls
+                    ctx.fillStyle = '#E52521';
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                    
+                    // Blue shirt
+                    ctx.fillStyle = '#4040E0';
+                    ctx.fillRect(this.x, this.y, this.width, this.height / 2);
+                    
+                    // Cap
+                    ctx.fillStyle = '#E52521';
+                    ctx.fillRect(this.x - 2, this.y, this.width + 4, 10);
+                    
+                    // Face
+                    ctx.fillStyle = '#FFCCAA';
+                    ctx.fillRect(this.x + 4, this.y + 10, this.width - 8, 14);
+                    
+                    // Eyes
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(this.x + 8, this.y + 16, 4, 4);
+                    
+                    // Mustache
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(this.x + 7, this.y + 24, 15, 3);
+
+                    // Animate walking
+                    if (this.vx !== 0 && !this.jumping) {
+                        const legOffset = [0, 5, 0, -5][this.currentFrame];
+                        ctx.fillStyle = '#4040E0';
+                        ctx.fillRect(this.x + 18, this.y + this.height - 15 + legOffset, 8, 15);
+                        ctx.fillRect(this.x + 6, this.y + this.height - 15 - legOffset, 8, 15);
+                    }
+                }
+
+                ctx.restore();
+            }
+
+            collidesWith(obj) {
+                return (
+                    this.x < obj.x + obj.width &&
+                    this.x + this.width > obj.x &&
+                    this.y < obj.y + obj.height &&
+                    this.y + this.height > obj.y
+                );
+            }
+        }
+
+        // Platform class
+        class Platform {
+            constructor(x, y, width, height, type = 'normal') {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.type = type;
+            }
+
+            draw() {
+                if (this.type === 'normal') {
+                    // Ground platform
+                    ctx.fillStyle = '#8B4513';
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                    
+                    // Top grass
+                    ctx.fillStyle = '#00AA00';
+                    ctx.fillRect(this.x, this.y, this.width, 5);
+                } else if (this.type === 'brick') {
+                    // Brick platform
+                    ctx.fillStyle = '#BC5A00';
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                    
+                    // Brick pattern
+                    ctx.fillStyle = '#8B4513';
+                    for (let i = 0; i < this.width; i += 16) {
+                        for (let j = 0; j < this.height; j += 16) {
+                            ctx.fillRect(this.x + i, this.y + j, 2, 2);
+                        }
+                    }
+                } else if (this.type === 'pipe') {
+                    // Pipe
+                    ctx.fillStyle = '#00AA00';
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                    
+                    // Pipe highlight
+                    ctx.fillStyle = '#00FF00';
+                    ctx.fillRect(this.x + 5, this.y, 5, this.height);
+                    
+                    // Pipe top
+                    ctx.fillStyle = '#00AA00';
+                    ctx.fillRect(this.x - 5, this.y, this.width + 10, 10);
+                }
+            }
+        }
+
+        // Coin class
+        class Coin {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.width = 20;
+                this.height = 20;
+                this.frameCount = 0;
+                this.rotation = 0;
+            }
+
+            update() {
+                this.frameCount++;
+                if (this.frameCount % 5 === 0) {
+                    this.rotation = (this.rotation + 1) % 4;
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+                
+                // Simple coin animation (simulating rotation)
+                const coinWidth = this.width * [1, 0.7, 0.3, 0.7][this.rotation];
+                
+                ctx.fillStyle = '#FFD700';
+                ctx.fillRect(-coinWidth / 2, -this.height / 2, coinWidth, this.height);
+                
+                // Coin highlight
+                ctx.fillStyle = '#FFEF00';
+                ctx.fillRect(-coinWidth / 2, -this.height / 2, coinWidth / 3, this.height);
+                
+                ctx.restore();
+            }
+        }
+
+        // Enemy class
+        class Enemy {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.width = 32;
+                this.height = 32;
+                this.vx = -2;
+                this.frameCount = 0;
+                this.currentFrame = 0;
+            }
+
+            update(platforms) {
+                this.x += this.vx;
+                
+                // Simple AI: change direction when hitting a wall or edge
+                let onPlatform = false;
+                for (const platform of platforms) {
+                    // Check if standing on a platform
+                    if (this.x + this.width > platform.x &&
+                        this.x < platform.x + platform.width &&
+                        this.y + this.height === platform.y) {
+                        onPlatform = true;
+                    }
+                    
+                    // Check platform collision
+                    if (this.x + this.width > platform.x &&
+                        this.x < platform.x + platform.width &&
+                        this.y + this.height > platform.y &&
+                        this.y < platform.y + platform.height) {
+                        // Hit a platform from the side
+                        this.vx = -this.vx;
+                    }
+                }
+                
+                // Check if about to fall off a platform
+                if (onPlatform) {
+                    let aboutToFall = true;
+                    for (const platform of platforms) {
+                        const nextX = this.vx < 0 ? this.x - 1 : this.x + this.width + 1;
+                        if (nextX + this.width > platform.x &&
+                            nextX < platform.x + platform.width &&
+                            this.y + this.height === platform.y) {
+                            aboutToFall = false;
+                            break;
+                        }
+                    }
+                    
+                    if (aboutToFall) {
+                        this.vx = -this.vx;
+                    }
+                }
+                
+                // Animation
+                this.frameCount++;
+                if (this.frameCount >= 10) {
+                    this.frameCount = 0;
+                    this.currentFrame = (this.currentFrame + 1) % 2;
+                }
+                
+                // Remove if out of bounds
+                if (this.x < -100 || this.x > gameWidth + 100) {
+                    return true;
+                }
+                
+                return false;
+            }
+
+            draw() {
+                // Simple Goomba-like enemy
+                ctx.fillStyle = '#8B4513';
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                
+                // Enemy face
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(this.x + 8, this.y + 10, 4, 4);
+                ctx.fillRect(this.x + 20, this.y + 10, 4, 4);
+                
+                // Enemy expression
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(this.x + 8, this.y + 22, 16, 3);
+                
+                // Enemy feet (animated)
+                if (this.currentFrame === 0) {
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(this.x + 4, this.y + this.height - 5, 8, 5);
+                    ctx.fillRect(this.x + this.width - 12, this.y + this.height - 5, 8, 5);
+                } else {
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(this.x + 8, this.y + this.height - 5, 8, 5);
+                    ctx.fillRect(this.x + this.width - 16, this.y + this.height - 5, 8, 5);
+                }
+            }
+        }
+
+        // Game objects
+        const player = new Player(100, 300);
+        let platforms = [];
+        let coins = [];
+        let enemies = [];
+        let cameraX = 0;
+
+        // Input handling
+        const keys = {};
+        
+        window.addEventListener('keydown', e => {
+            keys[e.key] = true;
+            
+            // Jump with Space
+            if (e.key === ' ' || e.key === 'ArrowUp') {
+                player.jump();
+            }
+            
+            // Prevent scrolling with arrow keys and space
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+                e.preventDefault();
+            }
+        });
+        
+        window.addEventListener('keyup', e => {
+            keys[e.key] = false;
+        });
+
+        // Level creation
+        function createLevel() {
+            platforms = [];
+            coins = [];
+            enemies = [];
+            
+            // Create ground
+            for (let i = 0; i < 50; i++) {
+                const gap = (i > 10 && i < 15) || (i > 25 && i < 28); // Add gaps
+                if (!gap) {
+                    platforms.push(new Platform(i * 100, 550, 100, 50, 'normal'));
+                }
+            }
+            
+            // Add platforms
+            platforms.push(new Platform(400, 450, 200, 20, 'brick'));
+            platforms.push(new Platform(700, 400, 150, 20, 'brick'));
+            platforms.push(new Platform(1000, 450, 300, 20, 'brick'));
+            platforms.push(new Platform(1500, 400, 200, 20, 'brick'));
+            platforms.push(new Platform(1800, 350, 100, 20, 'brick'));
+            platforms.push(new Platform(2000, 450, 300, 20, 'brick'));
+            platforms.push(new Platform(2500, 350, 100, 20, 'brick'));
+            platforms.push(new Platform(2700, 350, 100, 20, 'brick'));
+            platforms.push(new Platform(2900, 350, 100, 20, 'brick'));
+            
+            // Add pipes
+            platforms.push(new Platform(600, 480, 50, 70, 'pipe'));
+            platforms.push(new Platform(1200, 450, 60, 100, 'pipe'));
+            platforms.push(new Platform(2300, 450, 70, 100, 'pipe'));
+            
+            // Add coins
+            for (let i = 0; i < 30; i++) {
+                coins.push(new Coin(500 + i * 100, 350));
+            }
+            
+            // Add some coins above platforms
+            for (const platform of platforms) {
+                if (Math.random() < 0.3 && platform.type !== 'pipe') {
+                    for (let i = 0; i < 3; i++) {
+                        coins.push(new Coin(platform.x + 20 + i * 40, platform.y - 50));
+                    }
+                }
+            }
+            
+            // Add enemies
+            for (let i = 0; i < 10; i++) {
+                enemies.push(new Enemy(600 + i * 300, 518));
+            }
+        }
+
+        // Score update
+        function updateScore() {
+            scoreDisplay.textContent = `SCORE: ${score}`;
+        }
+
+        // Game loop
+        function gameLoop() {
+            if (!gameStarted || gamePaused) return;
+            
+            // Clear the canvas
+            ctx.clearRect(0, 0, gameWidth, gameHeight);
+            
+            // Update camera position (follow player)
+            const targetX = player.x - gameWidth / 3;
+            cameraX = Math.max(0, targetX); // Don't go back
+            
+            // Handle input
+            if (keys['ArrowLeft']) {
+                player.vx = -SPEED;
+                player.facingRight = false;
+            } else if (keys['ArrowRight']) {
+                player.vx = SPEED;
+                player.facingRight = true;
+            }
+            
+            // Update game objects
+            player.update(platforms, coins, enemies);
+            
+            for (let i = coins.length - 1; i >= 0; i--) {
+                coins[i].update();
+            }
+            
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                if (enemies[i].update(platforms)) {
+                    enemies.splice(i, 1);
+                }
+            }
+            
+            // Draw background
+            ctx.fillStyle = '#6B8CFF';
+            ctx.fillRect(0, 0, gameWidth, gameHeight);
+            
+            // Draw clouds
+            ctx.fillStyle = '#FFFFFF';
+            for (let i = 0; i < 10; i++) {
+                const cloudX = (i * 200) - (cameraX * 0.1) % 2000;
+                ctx.beginPath();
+                ctx.arc(cloudX, 100, 30, 0, Math.PI * 2);
+                ctx.arc(cloudX + 25, 85, 25, 0, Math.PI * 2);
+                ctx.arc(cloudX - 25, 85, 25, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Draw mountains in the background
+            ctx.fillStyle = '#4B7650';
+            for (let i = 0; i < 5; i++) {
+                const mountainX = (i * 500) - (cameraX * 0.2) % 2500;
+                ctx.beginPath();
+                ctx.moveTo(mountainX - 100, 550);
+                ctx.lineTo(mountainX, 350);
+                ctx.lineTo(mountainX + 100, 550);
+                ctx.fill();
+            }
+            
+            // Apply camera transformation
+            ctx.save();
+            ctx.translate(-cameraX, 0);
+            
+            // Draw game objects
+            for (const platform of platforms) {
+                // Only draw platforms that are visible
+                if (platform.x + platform.width > cameraX && platform.x < cameraX + gameWidth) {
+                    platform.draw();
+                }
+            }
+            
+            for (const coin of coins) {
+                // Only draw coins that are visible
+                if (coin.x + coin.width > cameraX && coin.x < cameraX + gameWidth) {
+                    coin.draw();
+                }
+            }
+            
+            for (const enemy of enemies) {
+                // Only draw enemies that are visible
+                if (enemy.x + enemy.width > cameraX && enemy.x < cameraX + gameWidth) {
+                    enemy.draw();
+                }
+            }
+            
+            player.draw();
+            
+            ctx.restore();
+            
+            // Request next frame
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start button click
+        startButton.addEventListener('click', () => {
+            if (!gameStarted) {
+                gameStarted = true;
+                startScreen.style.display = 'none';
+                createLevel();
+                gameLoop();
+            }
+        });
+
+        // Initialize game
+        updateScore();
+    </script>
+</body>
+</html>
