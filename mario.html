@@ -16,12 +16,13 @@
             position: relative;
             width: 800px;
             height: 600px;
-            margin: 0 auto;
+            margin: 20px auto;
             border: 4px solid #333;
             overflow: hidden;
         }
         #game-canvas {
             background-color: #6B8CFF;
+            display: block;
         }
         #score-display {
             position: absolute;
@@ -42,6 +43,8 @@
         }
         #start-screen {
             position: absolute;
+            top: 0;
+            left: 0;
             width: 100%;
             height: 100%;
             background-color: rgba(0, 0, 0, 0.7);
@@ -105,6 +108,13 @@
         // Game dimensions
         const gameWidth = canvas.width;
         const gameHeight = canvas.height;
+
+        // Check if canvas and context are available
+        if (!canvas || !ctx) {
+            console.error('Canvas or context not available');
+        } else {
+            console.log('Canvas and context initialized successfully');
+        }
 
         // Create sprite loader
         class SpriteLoader {
@@ -567,8 +577,8 @@
         window.addEventListener('keydown', e => {
             keys[e.key] = true;
             
-            // Jump with Space
-            if (e.key === ' ' || e.key === 'ArrowUp') {
+            // Jump with Space or ArrowUp
+            if ((e.key === ' ' || e.key === 'ArrowUp') && gameStarted) {
                 player.jump();
             }
             
@@ -637,9 +647,54 @@
             scoreDisplay.textContent = `SCORE: ${score}`;
         }
 
+        // Draw the start screen first (fix for initial rendering)
+        function drawStartScreen() {
+            // Clear the canvas
+            ctx.clearRect(0, 0, gameWidth, gameHeight);
+            
+            // Draw blue background
+            ctx.fillStyle = '#6B8CFF';
+            ctx.fillRect(0, 0, gameWidth, gameHeight);
+            
+            // Draw clouds
+            ctx.fillStyle = '#FFFFFF';
+            for (let i = 0; i < 5; i++) {
+                const cloudX = i * 200;
+                ctx.beginPath();
+                ctx.arc(cloudX, 100, 30, 0, Math.PI * 2);
+                ctx.arc(cloudX + 25, 85, 25, 0, Math.PI * 2);
+                ctx.arc(cloudX - 25, 85, 25, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Draw mountains in the background
+            ctx.fillStyle = '#4B7650';
+            for (let i = 0; i < 3; i++) {
+                const mountainX = i * 300 + 100;
+                ctx.beginPath();
+                ctx.moveTo(mountainX - 100, 550);
+                ctx.lineTo(mountainX, 350);
+                ctx.lineTo(mountainX + 100, 550);
+                ctx.fill();
+            }
+            
+            // Draw a simple ground
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(0, 550, gameWidth, 50);
+            
+            // Top grass
+            ctx.fillStyle = '#00AA00';
+            ctx.fillRect(0, 550, gameWidth, 5);
+        }
+
         // Game loop
         function gameLoop() {
-            if (!gameStarted || gamePaused) return;
+            if (!gameStarted || gamePaused) {
+                // Just draw a static background if the game hasn't started
+                drawStartScreen();
+                requestAnimationFrame(gameLoop);
+                return;
+            }
             
             // Clear the canvas
             ctx.clearRect(0, 0, gameWidth, gameHeight);
@@ -655,6 +710,9 @@
             } else if (keys['ArrowRight']) {
                 player.vx = SPEED;
                 player.facingRight = true;
+            } else {
+                // Add auto-stop if not pressing movement keys
+                player.vx = 0;
             }
             
             // Update game objects
@@ -740,8 +798,9 @@
             }
         });
 
-        // Initialize game
-        updateScore();
+        // Initialize game - Start the game loop to show at least the start screen
+        drawStartScreen();  // Draw the initial background
+        requestAnimationFrame(gameLoop);  // Start the game loop immediately to show the start screen
     </script>
 </body>
 </html>
